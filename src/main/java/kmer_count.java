@@ -177,6 +177,79 @@ class kmer_count {
         }
     }
 
+
+    private static class BFCounter {
+        // bloom filter counter
+        private static ArrayList<Short> counter;
+
+        // parameters for hash functions for bloom filter
+        private static ArrayList<Integer> hashParam1;
+        private static ArrayList<Integer> hashParam2;
+        private static int hashPrime;
+
+        /**
+         * Constructor of the bloom filter counter.
+         * @param counterSize the size of bloom filter.
+         * @param hashSize number of hash functions.
+         * @param prime the prime number for hash functions. Should be a prime
+         *              that is much larger than counterSize.
+         */
+        public BFCounter(int counterSize, int hashSize, int prime) {
+            counter = new ArrayList<>();
+            for (int i = 0; i < counterSize; i++) {
+                counter.add((short) 0);
+            }
+            hashParam1 = new ArrayList<>();
+            hashParam2 = new ArrayList<>();
+            hashPrime = prime;
+
+            Random rand = new Random();
+            for (int i = 0; i < hashSize; i++) {
+                hashParam1.add(rand.nextInt(prime));
+                hashParam2.add(rand.nextInt(prime));
+            }
+        }
+
+        /**
+         * Insert the kmer into the bloom filter counter and return the estimated count
+         * of the k-mer.
+         * @param kmer the KMer object to be counted.
+         * @return the estimated count of the k-mer.
+         */
+        public int insert(KMer kmer) {
+            // insert kmer into the BFCounter and return the count of the kmer
+            short min = 0x7FFF;
+            int slot;
+            for (int i = 0; i < hashParam1.size(); i++) {
+                slot = (hashParam1.get(i) * kmer.hashCode() + hashParam2.get(i)) % hashPrime % counter.size();
+                if (slot < 0) {
+                    slot += counter.size();
+                }
+                counter.set(slot, (short) (counter.get(slot) + 1));
+                if (counter.get(slot) < min) {
+                    min = counter.get(slot);
+                }
+            }
+            return min;
+        }
+
+        /**
+         * clear all counts in the bloom filter.
+         */
+        public void reset(int counterSize) {
+            for (int i = 0; i < counterSize; i++) {
+                counter.set(i, (short) 0);
+            }
+        }
+    }
+
+    /**
+     * Static parameters
+     */
+
+    // bloom filter counter for filtering out the k-mers with high counts
+    private static BFCounter bfCounter;
+
     // a hash table storing the counts of k-mers
     private static HashMap<KMer, Short> counter;
 
@@ -185,9 +258,6 @@ class kmer_count {
 
     // the threshold of k-mer frequency that is to be counted
     private static int q;
-
-    // size of the counter
-    private static int N;
 
     // total number of k-mers to be counted
     private static int m;
@@ -201,44 +271,23 @@ class kmer_count {
     }
 
     /**
-     * Initialize the kmer_count object and set the size of counter
-     * @param counterSize size of counter `N`.
-     */
-    public static void init(int counterSize) {
-        N = counterSize;
-        counter = new HashMap<>();
-    }
-
-    /**
      * Count the total number of k-mer in the file
      */
     private static final KMerOperation count = (KMer kmer) -> m += 1;
 
     /**
-     * Insert the k-mer into `counter`. We use Misra-Gries algorithm to only
-     * store the most frequently-appearing k-mer.
+     * Insert the k-mer into BFCounter. If the returned estimated count
+     * is larger or equal to q, then store the k-mer in counter.
      * We only process those k-mers whose hashCode % numBins == currBin
      * @param kmer The KMer object to be counted.
      */
     private static final KMerOperation insertCounter = (KMer kmer) -> {
-        if (kmer.hashCode() % numBins != currBin) return;
-        // insert kmer into the counter and return the count of the kmer
-        if (counter.containsKey(kmer)) {
-            counter.put(kmer, (short) (counter.get(kmer) + 1));
-        } else {
-            counter.put(kmer, (short) 1);
-            // maintain the size of the counter to N
-            if (counter.size() > N) {
-                Iterator<Map.Entry<KMer, Short>> it = counter.entrySet().iterator();
-                while (it.hasNext()) {
-                    Map.Entry<KMer, Short> entry = it.next();
-                    if (entry.getValue() <= 1) {
-                        it.remove();
-                    } else {
-                        entry.setValue((short) (entry.getValue() - 1));
-                    }
-                }
-            }
+        int bin = kmer.hashCode() % numBins;
+        if (bin < 0) bin += numBins;
+        if (bin == currBin) {
+            // insert kmer into the counter and return the count of the kmer
+            int count = bfCounter.insert(kmer);
+            if (count >= q) counter.put(kmer, (short) 0);
         }
     };
 
@@ -293,6 +342,7 @@ class kmer_count {
             if (entry.getValue() >= q) {
                 System.out.println(entry.getValue() + " " + entry.getKey());
             }
+
         }
     }
 
@@ -308,29 +358,43 @@ class kmer_count {
     }
 
     public static void main(String[] args) {
-        k = 20;
-        q = 100;
-        init(20000);
-        //KMer k = new KMer(4);
-        String file = "../../../ass2_dataset/chr2L_dm6.fa";
+        // prime number used for the hash functions in bloom filter
+        // preferred to be much larger than BLOOM_FILTER_SIZE
+        int BLOOM_FILTER_PRIME = 1982627;
+
+        // Number of hash functions used in bloom filter
+        int BLOOM_FILTER_HASH = 2;
+        // Size of the bloom filter (length of the array)
+        int BLOOM_FILTER_SIZE = 100000;
+
+
+        if (args.length != 3) {
+            System.out.println("Usage: java kmer_count [fasta_file_directory] [k] [q]");
+        }
+        String file = args[0];
+        k = Integer.parseInt(args[1]);
+        q = Integer.parseInt(args[2]);
+
+
+        bfCounter = new BFCounter(BLOOM_FILTER_SIZE, BLOOM_FILTER_HASH, BLOOM_FILTER_PRIME);
         try {
+            // use the size of the file to estimate the number of k-mers to be parsed
             int bytes = (int) Files.size(Paths.get(file));
+
             // set the number of bins
-            numBins = bytes / q / N + 1;
-            System.out.println(bytes + " " + numBins);
+            numBins = bytes * BLOOM_FILTER_HASH / (q/2) / BLOOM_FILTER_SIZE + 1;
+            //System.out.println(bytes + " " + numBins);
             for (currBin = 0; currBin < numBins; currBin++) {
-                reset(); // reset the counter
-                readFile(file, insertCounter);
-                clear(); // clear the count for each k-mer
-                readFile(file, countCounter);
-                print(); // print the result of counting
+                reset();                             // reset the counter
+                readFile(file, insertCounter);       // use bloom filter to filter out frequent k-mers
+                readFile(file, countCounter);        // count the exact appearance of each k-mer
+                print();                             // print the result of counting
+                bfCounter.reset(BLOOM_FILTER_SIZE);  // reset the bloom filter
             }
         } catch (IOException e) {
             e.printStackTrace();
         }
 
-
-        //System.out.println(k.toString());
     }
 
 

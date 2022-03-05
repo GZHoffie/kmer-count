@@ -1,4 +1,12 @@
 .idea
-.class
 KMerCount.iml
 ass2_dataset
+results
+/src/main/java/InvalidKMerException.class
+/src/main/java/kmer_count$BFCounter.class
+/src/main/java/kmer_count$KMer.class
+/src/main/java/kmer_count$KMerOperation.class
+/src/main/java/kmer_count.class
+/src/main/java/kmer_count_misra_gries$KMer.class
+/src/main/java/kmer_count_misra_gries$KMerOperation.class
+/src/main/java/kmer_count_misra_gries.class
