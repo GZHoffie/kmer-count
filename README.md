@@ -1,4 +1,4 @@
-# kmer-count
+# K-mer Counting Algorithms
 
 This directory contains implementation of several k-mer counting algorithms in Java. They take `.fa` files as input
 and output the count of frequently-appearing k-mers.
